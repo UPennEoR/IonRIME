@@ -177,8 +177,8 @@ def make_jones(freq):
 
     norm = np.sqrt(np.amax(I, axis=0))
 
-    g1 /= norm
-    g2 /= norm
+#    g1 /= norm
+#    g2 /= norm
 
     rhm = irf.rotate_healpix_map
 
@@ -253,7 +253,7 @@ def transform_basis(nside, jones, z0_cza, R_z0):
     cosX = np.einsum('a...,a...', fRcza_v, tb_v)
     sinX = np.einsum('a...,a...', fRra_v, tb_v)
 
-    basis_rot = np.array([[cosX, sinX],[-sinX, cosX]])
+    basis_rot = np.array([[cosX, -sinX],[sinX, cosX]])
     basis_rot = np.transpose(basis_rot,(2,0,1))
 
     # return np.einsum('...ab,...bc->...ac', jones, basis_rot)
@@ -290,70 +290,66 @@ def jones2celestial_basis(jones, z0_cza=None):
 
     R_z0 = irf.rotation_matrix(RotAxis, RotAngle)
 
-    R_jones = irf.rotate_jones(jones, R_z0, multiway=True) # beams are now pointed at -31 deg latitude
+### New
+    jones_b = transform_basis(nside, jones, z0_cza, R_z0.T)
 
-    jones_out = np.zeros((npix, 2,2), dtype=np.complex128)
-
-########
-## This next bit is a routine to patch the topological hole by grabbing pixel
-## data from a neighborhood of the corrupted pixels.
-## It uses the crucial assumption that in the ra/cza basis the dipoles
-## are orthogonal at zenith. This means that for the diagonal components,
-## the zenith pixels should be a local maximum, while for the off-diagonal
-## components the zenith pixels should be a local minimum (in absolute value).
-## Using this assumption, we can cover the corrupted pixel(s) in the
-## zenith neighborhood by the maximum pixel of the neighborhood
-## for the diagonal, and the minimum of the neighborhood for the off-diagonal.
-## As long as the function is relatively flat in this neighborhood, this should
-## be a good fix
-
-    jones_b = transform_basis(nside, R_jones, z0_cza, R_z0)
-
-    cf = [np.real,np.imag]
-    u = [1.,1.j]
-
-
-    z0pix = hp.vec2pix(nside, z0[0],z0[1],z0[2])
-    if nside < 128:
-        z0_nhbrs = hp.get_all_neighbours(nside, z0_cza, phi=0.)
-    else:
-        z0_nhbrs = neighbors_of_neighbors(nside, z0_cza, phi=0.)
-
-    jones_c = np.zeros((npix,2,2,2), dtype=np.float64)
-    for k in range(2):
-        jones_c[:,:,:,k] = cf[k](jones_b)
-
-    for i in range(2):
-        for j in range(2):
-            for k in range(2):
-                z0_nbhd = jones_c[z0_nhbrs,i,j,k]
-
-                if i == j:
-                    fill_val_pix = np.argmax(abs(z0_nbhd))
-                    fill_val = z0_nbhd[fill_val_pix]
-
-                else:
-                    fill_val_pix = np.argmin(abs(z0_nbhd))
-                    fill_val = z0_nbhd[fill_val_pix]
-
-                jones_c[z0_nhbrs,i,j,k] = fill_val
-                jones_c[z0pix,i,j,k] = fill_val
-
-    jones_out = jones_c[:,:,:,0] + 1j*jones_c[:,:,:,1]
+    rot = [0., -z0_cza, 0.]
+    jones_out = irf.unitary_rotate_jones(jones_b, rot, multiway=True)
 
     return jones_out
 
-def udgrade_jones(jones, nside_out):
-    jones2 = np.zeros((hp.nside2npix(nside_out),2,2), dtype=np.complex128)
+#     R_jones = irf.rotate_jones(jones, R_z0, multiway=True) # beams are now pointed at -31 deg latitude
+#
+#     jones_out = np.zeros((npix, 2,2), dtype=np.complex128)
+#
+# ########
+# ## This next bit is a routine to patch the topological hole by grabbing pixel
+# ## data from a neighborhood of the corrupted pixels.
+# ## It uses the crucial assumption that in the ra/cza basis the dipoles
+# ## are orthogonal at zenith. This means that for the diagonal components,
+# ## the zenith pixels should be a local maximum, while for the off-diagonal
+# ## components the zenith pixels should be a local minimum (in absolute value).
+# ## Using this assumption, we can cover the corrupted pixel(s) in the
+# ## zenith neighborhood by the maximum pixel of the neighborhood
+# ## for the diagonal, and the minimum of the neighborhood for the off-diagonal.
+# ## As long as the function is relatively flat in this neighborhood, this should
+# ## be a good fix
+#
+#     jones_b = transform_basis(nside, R_jones, z0_cza, R_z0)
+#
+#     cf = [np.real,np.imag]
+#     u = [1.,1.j]
+#
+#
+#     z0pix = hp.vec2pix(nside, z0[0],z0[1],z0[2])
+#     if nside < 128:
+#         z0_nhbrs = hp.get_all_neighbours(nside, z0_cza, phi=0.)
+#     else:
+#         z0_nhbrs = neighbors_of_neighbors(nside, z0_cza, phi=0.)
+#
+#     jones_c = np.zeros((npix,2,2,2), dtype=np.float64)
+#     for k in range(2):
+#         jones_c[:,:,:,k] = cf[k](jones_b)
+#
+#     for i in range(2):
+#         for j in range(2):
+#             for k in range(2):
+#                 z0_nbhd = jones_c[z0_nhbrs,i,j,k]
+#
+#                 if i == j:
+#                     fill_val_pix = np.argmax(abs(z0_nbhd))
+#                     fill_val = z0_nbhd[fill_val_pix]
+#
+#                 else:
+#                     fill_val_pix = np.argmin(abs(z0_nbhd))
+#                     fill_val = z0_nbhd[fill_val_pix]
+#
+#                 jones_c[z0_nhbrs,i,j,k] = fill_val
+#                 jones_c[z0pix,i,j,k] = fill_val
+#
+#     jones_out = jones_c[:,:,:,0] + 1j*jones_c[:,:,:,1]
 
-    parts = [np.real,np.imag]
-    comp = [1., 1.j]
-    for i in range(2):
-        for j in range(2):
-            for k in range(2):
-                z = udgrade(parts[k](jones[:,i,j]),nside_out)
-                jones2[:,i,j] += z*comp[k]
-    return jones2
+    # return jones_out
 
 def jones_f(nu_node, nside):
     return udgrade_jones(jones2celestial_basis(make_jones(nu_node)), nside)
