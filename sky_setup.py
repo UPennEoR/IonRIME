@@ -38,6 +38,7 @@ class SkyConstructor(object):
 
         skyGenerators = {
             'unpol_GSM2008': self.unpol_GSM2008,
+            'unpol_GSM2008_remove_monopole': self.unpol_GSM2008_remove_monopole,
             'MartaFGS': self.MartaFGS,
             'skyA': self.skyA,
             'skyB': self.skyB,
@@ -523,7 +524,7 @@ class SkyConstructor(object):
 
         stokes_cubes = gal.getpolsky()
         I,Q,U,V = [stokes_cubes[:,i,:] for i in range(4)]
-        
+
         if self.unpolarized == True:
             Q *= 0
             U *= 0
@@ -555,6 +556,12 @@ class SkyConstructor(object):
 
     def unpol_GSM2008(self):
         I = self.GSM2008()
+        Q,U,V = [np.zeros_like(I) for k in range(3)]
+        return I,Q,U,V
+
+    def unpol_GSM2008_remove_monopole(self):
+        I = self.GSM2008()
+        I -= np.broadcast_to(np.mean(I, axis=1), I.shape)
         Q,U,V = [np.zeros_like(I) for k in range(3)]
         return I,Q,U,V
 
