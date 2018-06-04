@@ -70,9 +70,14 @@ if __name__ == "__main__":
 
         h5f = h5py.File(out_dir + out_name, 'w')
 
+        VS = VisibilitySimulation(P)
+
         for n in range(N_skies):
-            VS = VisibilitySimulation(P)
-            VS.run()
+            if n == 0:
+                VS.run()
+            else:
+                VS.setup_sky(params=P)
+                
             h5f.create_dataset('ionpol' + str(n), data=VS.Vis)
 
             VS.ndays = 1

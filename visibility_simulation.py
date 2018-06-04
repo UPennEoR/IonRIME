@@ -66,17 +66,7 @@ class VisibilitySimulation(object):
         ## sky.shape = (self.nfreq, self.npix, 2,2)
 
         print "Setting up sky."
-        sky_init = SkyConstructor(parameters)
-        self.I, self.Q, self.U, self.V = sky_init.stokes_parameters
-
-        if self.point_source_sim is False:
-            self.I_alm, self.Q_alm, self.U_alm = [map2alm(S, self.lmax) for S in [self.I, self.Q, self.U]]
-            if self.circular_pol is True:
-                self.V_alm = map2alm(self.V, self.lmax)
-
-        if self.point_source_sim is True:
-            self.src_ra = sky_init.src_ra
-            self.src_cza = sky_init.src_cza
+        self.setup_sky(params=parameters)
 
         ## Instrument
         ## ijones.shape = (self.nfreq, self.npix, 2, 2)
@@ -116,12 +106,6 @@ class VisibilitySimulation(object):
         self.RMs = []
 
         self.ra0 = np.radians(self.hour_offset * 15.) # the starting RA of the simulation window i.e. when t=0, p.ra0 is at the beam's zenith meridian
-
-    def run(self):
-        self.compute_visibilities()
-
-    def compute_visibilities(self):
-        tmark_loopstart = time.time()
 
         if self.ionosphere == 'radionopy':
 
@@ -173,17 +157,60 @@ class VisibilitySimulation(object):
                 for ti in range(self.ntime):
                     self.UT_times[di].append(di)
 
+        self.parameters = parameters
+
+    def setup_sky(self, params=params):
+        sky_init = SkyConstructor(params)
+        self.I, self.Q, self.U, self.V = sky_init.stokes_parameters
+
+        if self.point_source_sim is False:
+            self.I_alm, self.Q_alm, self.U_alm = [map2alm(S, self.lmax) for S in [self.I, self.Q, self.U]]
+            if self.circular_pol is True:
+                self.V_alm = map2alm(self.V, self.lmax)
+
+        if self.point_source_sim is True:
+            self.src_ra = sky_init.src_ra
+            self.src_cza = sky_init.src_cza
+
+    def run(self):
+        self.compute_visibilities()
+
+    def compute_visibilities(self):
+        tmark_loopstart = time.time()
+
         if self.final_day_average is True:
             Nd_use = 1
         else:
             Nd_use = self.ndays
 
-        for d in range(Nd_use):
-            print "d is " + str(d)
-            for t in range(self.ntime):
-                if self.point_source_sim is True:
+        for t in range(self.ntime):
+            print "t is " + str(t)
+            if self.point_source_sim is True:
+                for d in range(Nd_use):
+                    print "d is " + str(d)
                     self.from_point_sources(d,t)
+            else:
+                total_angle = float(self.nhours * 15) # degrees
+                offset_angle = float(self.hour_offset * 15) # degrees
+                zl_ra = ((float(t) / float(self.ntime)) * np.radians(total_angle) + np.radians(offset_angle)) % (2*np.pi) # radians
+
+                RotAngle = zl_ra
+
+                mrot = np.exp(1j * self.m * RotAngle)
+
+                self.It, self.Qt, self.Ut = [np.zeros((self.nfreq, self.npix)) for n in range(3)]
+
+                if self.unpolarized == True:
+                    for fi in range(self.nfreq):
+                        self.It[fi] = hp.alm2map(self.I_alm[fi] * mrot, self.nside, verbose=False)
                 else:
+                    for fi in range(self.nfreq):
+                        self.It[fi] = hp.alm2map(self.I_alm[fi] * mrot, self.nside, verbose=False)
+                        self.Qt[fi] = hp.alm2map(self.Q_alm[fi] * mrot, self.nside, verbose=False)
+                        self.Ut[fi] = hp.alm2map(self.U_alm[fi] * mrot, self.nside, verbose=False)
+
+                for d in range(Nd_use):
+                    print "d is " + str(d)
                     self.from_healpix_grid(d,t)
 
         self.Vis *= (4. * np.pi / self.npix)
@@ -193,29 +220,8 @@ class VisibilitySimulation(object):
 
     def from_healpix_grid(self,d,t):
 
-        print "t is " + str(t)
-        total_angle = float(self.nhours * 15) # degrees
-        offset_angle = float(self.hour_offset * 15) # degrees
-        zl_ra = ((float(t) / float(self.ntime)) * np.radians(total_angle) + np.radians(offset_angle)) % (2*np.pi) # radians
-
-        RotAngle = zl_ra
-
-        mrot = np.exp(1j * self.m * RotAngle)
-
-        It, Qt, Ut = [np.zeros((self.nfreq, self.npix)) for n in range(3)]
-        
-        if self.unpolarized == True:
-            for fi in range(self.nfreq):
-                It[fi] = hp.alm2map(self.I_alm[fi] * mrot, self.nside, verbose=False)
-        else:
-            for fi in range(self.nfreq):
-                It[fi] = hp.alm2map(self.I_alm[fi] * mrot, self.nside, verbose=False)
-                Qt[fi] = hp.alm2map(self.Q_alm[fi] * mrot, self.nside, verbose=False)
-                Ut[fi] = hp.alm2map(self.U_alm[fi] * mrot, self.nside, verbose=False)
-
         ## Ionosphere
         """
-        ionRM.shape = (self.nhours, self.nfreq, self.npix)
         ionRM_t.shape = (self.nfreq, self.npix)
         """
         if self.ionosphere != 'none':
@@ -234,9 +240,9 @@ class VisibilitySimulation(object):
                 ion_cos2 = irnf.numbap_cos(2. * ionAngle) # numba can multithread a numpy ufunc, no fuss no muss!
                 ion_sin2 = irnf.numbap_sin(2. * ionAngle)
 
-                QUout = irnf.complex_rotation(Qt,Ut, ion_cos2, ion_sin2)
-                Qt = QUout.real
-                Ut = QUout.imag
+                QUout = irnf.complex_rotation(self.Qt,self.Ut, ion_cos2, ion_sin2)
+                self.Qt = QUout.real
+                self.Ut = QUout.imag
 
             elif self.final_day_average is True:
 
@@ -258,13 +264,13 @@ class VisibilitySimulation(object):
                 A_re = np.mean(irnf.numbap_cos(2. * ionAngle), axis=0)
                 A_im = np.mean(irnf.numbap_sin(2. * ionAngle), axis=0)
 
-                QUout = irnf.complex_rotation(Qt,Ut, A_re, A_im)
-                Qt = QUout.real
-                Ut = QUout.imag
+                QUout = irnf.complex_rotation(self.Qt,self.Ut, A_re, A_im)
+                self.Qt = QUout.real
+                self.Ut = QUout.imag
 
         sky_t = np.array([
-            [It + Qt, Ut],
-            [Ut, It - Qt]]).transpose(2,3,0,1) # sky_t.shape = (p.nfreq, p.npix, 2, 2)
+            [self.It + self.Qt, self.Ut],
+            [self.Ut, self.It - self.Qt]]).transpose(2,3,0,1) # sky_t.shape = (p.nfreq, p.npix, 2, 2)
 
         irnf.instrRIME_integral(self.ijones, sky_t, self.ijonesH, self.K, self.Vis[d,t,:,:,:].squeeze())
 
